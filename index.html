@@ -721,12 +721,36 @@ function renderDriveStatus(){
 const GOOGLE_CLIENT_ID = "615718151592-oufmh2787a6vap1plle6gjgkinmb5q2a.apps.googleusercontent.com";
 const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.appdata";
 const DRIVE_FILE_NAME = "mels-pr-tracker.json";
+const DRIVE_TOKEN_KEY = "pb-tracker:drive-token";
 
 let driveTokenClient = null;
 let driveAccessToken = null;
 
 function driveConfigured(){
   return GOOGLE_CLIENT_ID && !GOOGLE_CLIENT_ID.startsWith("PASTE_YOUR");
+}
+
+/* Access tokens are short-lived (~1hr) and normally live only in memory,
+   which means reloading the page would force a fresh sign-in every time.
+   Stashing it in sessionStorage lets it survive a page reload without
+   persisting indefinitely — it clears itself when the tab/browser closes,
+   or once the token's actual expiry passes. */
+function loadStoredDriveToken(){
+  try{
+    const raw = sessionStorage.getItem(DRIVE_TOKEN_KEY);
+    if(!raw) return;
+    const parsed = JSON.parse(raw);
+    if(parsed && parsed.token && parsed.expiresAt && Date.now() < parsed.expiresAt - 60000){
+      driveAccessToken = parsed.token;
+    }
+  }catch(e){ /* ignore, just means we'll ask again */ }
+}
+
+function storeDriveToken(token, expiresInSeconds){
+  try{
+    const expiresAt = Date.now() + (Number(expiresInSeconds) || 3600) * 1000;
+    sessionStorage.setItem(DRIVE_TOKEN_KEY, JSON.stringify({ token, expiresAt }));
+  }catch(e){ /* ignore */ }
 }
 
 function ensureDriveTokenClient(){
@@ -749,6 +773,7 @@ function requestDriveToken(){
       client.callback = (resp) => {
         if(resp.error){ reject(new Error(resp.error)); return; }
         driveAccessToken = resp.access_token;
+        storeDriveToken(resp.access_token, resp.expires_in);
         resolve(resp.access_token);
       };
       client.requestAccessToken({ prompt: driveAccessToken ? "" : "consent" });
@@ -1414,6 +1439,7 @@ document.getElementById("driveLoadBtn").addEventListener("click", loadFromDrive)
 /* ---------- init ---------- */
 (async function init(){
   await loadData();
+  loadStoredDriveToken();
   render();
   renderBackupStatus();
   renderDriveStatus();
